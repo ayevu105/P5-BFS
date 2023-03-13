@@ -1,3 +1,10 @@
+/* @file fs.c
+ * @brief The following code includes the implementations that fufill the project specifications of P5 
+ * through completing the fsRead and fsWrite functions. 
+ * @author Anthony Vu
+ * @date 03/12/2023
+ */
+
 // ============================================================================
 // fs.c - user FileSytem API
 // ============================================================================
@@ -83,39 +90,43 @@ i32 fsOpen(str fname) {
 // read (may be less than 'numb' if we hit EOF).  On failure, abort
 // ============================================================================
 i32 fsRead(i32 fd, i32 numb, void* buf) {
-  i8 buffer[BYTESPERDISK];
-  i32 fbn = bfsTell(fd) / BYTESPERBLOCK;
-  i32 inum = bfsFdToInum(fd);
-  if (numb > BYTESPERBLOCK) {
-    i8 blockBuffer[BYTESPERBLOCK];
-    for (int i = 0; i < (numb / BYTESPERBLOCK); i++) {
-      bfsRead(inum, fbn + i, blockBuffer);
-      for (int j = 0; j < BYTESPERBLOCK; j++) {
-        buffer[(BYTESPERBLOCK * i) + j] = blockBuffer[j];
-      }
+i32 inum = bfsFdToInum(fd);
+i32 fbn = bfsTell(fd) / BYTESPERBLOCK;
+i8 otherBuffer[BYTESPERDISK];
+
+if (numb <= BYTESPERBLOCK) {
+  bfsRead(inum, fbn, otherBuffer);
+  memcpy(buf, otherBuffer, numb);
+} else {
+  i8 buffer[BYTESPERBLOCK];
+  for (int i = 0; i < (numb / BYTESPERBLOCK); i++) {
+    bfsRead(inum, fbn + i, buffer);
+    for (int j = 0; j < BYTESPERBLOCK; j++) {
+      otherBuffer[(BYTESPERBLOCK * i) + j] = buffer[j];
     }
-    if (numb % BYTESPERBLOCK != 0) {
-      bfsRead(inum, fbn + (numb / BYTESPERBLOCK), blockBuffer);
-      for (int j = 0; j < (numb % BYTESPERBLOCK); j++) {
-        buffer[(BYTESPERBLOCK * (numb / BYTESPERBLOCK)) + j] = blockBuffer[j];
-      }
-    }
-    memcpy(buf, buffer, numb);
-    int noWriting = 0;
-    bfsRead(inum, fbn + (numb / BYTESPERBLOCK) - 1, blockBuffer);
-    for (int i = 0; i < BYTESPERBLOCK; i++) {
-      if(blockBuffer[i] == 0) {
-        noWriting++;
-      }
-    }
-    numb = numb - noWriting;
   }
-  else {
-    bfsRead(inum, fbn, buffer);
-    memcpy(buf, buffer, numb);
+  
+  if (numb % BYTESPERBLOCK != 0) {
+    bfsRead(inum, fbn + (numb / BYTESPERBLOCK), buffer);
+    for (int i = 0; i < (numb % BYTESPERBLOCK); i++) {
+      otherBuffer[(BYTESPERBLOCK * (numb / BYTESPERBLOCK)) + i] = buffer[i];
+    }
   }
-  fsSeek(fd, numb, SEEK_CUR);
-  return numb;
+  
+  memcpy(buf, otherBuffer, numb);
+  
+  int write = 0;
+  bfsRead(inum, fbn + (numb / BYTESPERBLOCK) - 1, buffer);
+  for (int i = 0; i < BYTESPERBLOCK; i++) {
+    if(buffer[i] == 0) {
+      write++;
+    }
+  }
+  numb = numb - write;
+}
+
+fsSeek(fd, numb, SEEK_CUR);
+return numb;
 }
 
 
@@ -183,56 +194,60 @@ i32 fsSize(i32 fd) {
 // destination file.  On success, return 0.  On failure, abort
 // ============================================================================
 i32 fsWrite(i32 fd, i32 numb, void* buf) {
-  i8 buffer[2048];
-  memcpy(buffer, buf, 2048);
-  i32 fbn = bfsTell(fd) / BYTESPERBLOCK;
-  i32 inum = bfsFdToInum(fd);
-  i32 dbn = bfsFbnToDbn(inum, fbn);
-  i8 blockBuffer[BYTESPERBLOCK] = {0};
-  if (dbn >= 0) {
-    bfsRead(inum, fbn, blockBuffer);
-  }
-  else {
+i32 inum = bfsFdToInum(fd);
+i32 fbn = bfsTell(fd) / BYTESPERBLOCK;
+i32 dbn = bfsFbnToDbn(inum, fbn);
+
+i8 otherBuffer[2048];
+memcpy(otherBuffer, buf, 2048);
+
+i8 buffer[BYTESPERBLOCK] = {0};
+
+if (dbn < 0) {
     bfsAllocBlock(inum, fbn);
     dbn = bfsFbnToDbn(inum, fbn);
-    memset(blockBuffer, 0, BYTESPERBLOCK);
-  }
-  if (numb > BYTESPERBLOCK) {
-    int remainder = numb;
-    for (int i = 0; i + (fsTell(fd) % BYTESPERBLOCK) < BYTESPERBLOCK; i++) {
-      blockBuffer[i + (fsTell(fd) % BYTESPERBLOCK)] = buffer[i];
-      remainder--;
-    }
-    bioWrite(dbn, blockBuffer);
-    while (remainder > BYTESPERBLOCK) {
-      for (int j = 0; j < BYTESPERBLOCK; j++) {
-        blockBuffer[j] = buffer[numb - remainder];
-        remainder--;
-      }
-      fbn++;
-      dbn = bfsFbnToDbn(inum, fbn);
-      bioWrite(dbn, blockBuffer);
-    }
-    dbn = bfsFbnToDbn(inum, fbn + 1);
-    if (dbn >= 0) {
-      bfsRead(inum, fbn + 1, blockBuffer);
-    }
-    else {
-      bfsAllocBlock(inum, fbn + 1);
-      dbn = bfsFbnToDbn(inum, fbn + 1);
-      memset(blockBuffer, 0, BYTESPERBLOCK);
-    }
-    for (int i = 0; i < remainder ; i++) {
-      blockBuffer[i] = buffer[numb - remainder + i];
-    }
-    bioWrite(dbn, blockBuffer);
-  }
-  else {
+    memset(buffer, 0, BYTESPERBLOCK);
+} else {
+    bfsRead(inum, fbn, buffer);
+}
+
+if (numb <= BYTESPERBLOCK) {
     for (int i = 0; i < numb; i++) {
-      blockBuffer[(fsTell(fd) % BYTESPERBLOCK) + i] = buffer[i];
+        buffer[(fsTell(fd) % BYTESPERBLOCK) + i] = otherBuffer[i];
     }
-    bioWrite(dbn, &blockBuffer);
-  }
-  fsSeek(fd, numb, SEEK_CUR);
-  return 0;
+    bioWrite(dbn, &buffer);
+} else {
+    int remainder = numb;
+    int offset = fsTell(fd) % BYTESPERBLOCK;
+
+    for (int i = offset; i < BYTESPERBLOCK; i++) {
+        buffer[i] = otherBuffer[i - offset];
+        remainder--;
+    }
+    bioWrite(dbn, buffer);
+
+    while (remainder > BYTESPERBLOCK) {
+        fbn++;
+        dbn = bfsFbnToDbn(inum, fbn);
+        memcpy(buffer, otherBuffer + numb - remainder, BYTESPERBLOCK);
+        bioWrite(dbn, buffer);
+        remainder = remainder - BYTESPERBLOCK;
+    }
+
+    if (remainder > 0) {
+        dbn = bfsFbnToDbn(inum, fbn + 1);
+        if (dbn < 0) {
+            bfsAllocBlock(inum, fbn + 1);
+            dbn = bfsFbnToDbn(inum, fbn + 1);
+            memset(buffer, 0, BYTESPERBLOCK);
+        } else {
+            bfsRead(inum, fbn + 1, buffer);
+        }
+        memcpy(buffer, otherBuffer + numb - remainder, remainder);
+        bioWrite(dbn, buffer);
+    }
+}
+
+fsSeek(fd, numb, SEEK_CUR);
+return 0;
 }
