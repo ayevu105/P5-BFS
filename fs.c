@@ -90,43 +90,35 @@ i32 fsOpen(str fname) {
 // read (may be less than 'numb' if we hit EOF).  On failure, abort
 // ============================================================================
 i32 fsRead(i32 fd, i32 numb, void* buf) {
-i32 inum = bfsFdToInum(fd);
-i32 fbn = bfsTell(fd) / BYTESPERBLOCK;
-i8 otherBuffer[BYTESPERDISK];
+  i32 inum = bfsFdToInum(fd);
+  i32 fbn = bfsTell(fd) / BYTESPERBLOCK;
+  i8 buffer[BYTESPERDISK];
 
-if (numb <= BYTESPERBLOCK) {
-  bfsRead(inum, fbn, otherBuffer);
-  memcpy(buf, otherBuffer, numb);
-} else {
-  i8 buffer[BYTESPERBLOCK];
-  for (int i = 0; i < (numb / BYTESPERBLOCK); i++) {
-    bfsRead(inum, fbn + i, buffer);
-    for (int j = 0; j < BYTESPERBLOCK; j++) {
-      otherBuffer[(BYTESPERBLOCK * i) + j] = buffer[j];
+  if (numb <= BYTESPERBLOCK) {
+    bfsRead(inum, fbn, buffer); // read a block from the file into the buffer
+    memcpy(buf, buffer, numb); // copy the read data from the buffer to buf
+  } else {
+    for (int i = 0; i < (numb / BYTESPERBLOCK); i++) { //read each block starting from the current cursor position
+      bfsRead(inum, fbn + i, buffer + (BYTESPERBLOCK * i));
     }
-  }
-  
-  if (numb % BYTESPERBLOCK != 0) {
-    bfsRead(inum, fbn + (numb / BYTESPERBLOCK), buffer);
-    for (int i = 0; i < (numb % BYTESPERBLOCK); i++) {
-      otherBuffer[(BYTESPERBLOCK * (numb / BYTESPERBLOCK)) + i] = buffer[i];
+    if (numb % BYTESPERBLOCK != 0) { // if there are remaining bytes read the last block seperately
+      bfsRead(inum, fbn + (numb / BYTESPERBLOCK), buffer + (BYTESPERBLOCK * (numb / BYTESPERBLOCK)));
     }
-  }
-  
-  memcpy(buf, otherBuffer, numb);
-  
-  int write = 0;
-  bfsRead(inum, fbn + (numb / BYTESPERBLOCK) - 1, buffer);
-  for (int i = 0; i < BYTESPERBLOCK; i++) {
-    if(buffer[i] == 0) {
-      write++;
+    memcpy(buf, buffer, numb);
+    
+    //adjusts number of bytes that are read in the last block 
+    int w = 0; 
+    bfsRead(inum, fbn + (numb / BYTESPERBLOCK) - 1, buffer);
+    for (int i = 0; i < BYTESPERBLOCK; i++) {
+      if (buffer[i] == 0) {
+        w++;
+      }
     }
+    numb = numb - w;
   }
-  numb = numb - write;
-}
 
-fsSeek(fd, numb, SEEK_CUR);
-return numb;
+  fsSeek(fd, numb, SEEK_CUR); //move file cursor foward by number of bytes read
+  return numb; //return number of bytes read
 }
 
 
@@ -203,20 +195,25 @@ memcpy(otherBuffer, buf, 2048);
 
 i8 buffer[BYTESPERBLOCK] = {0};
 
+// allocate new file block and initialize the buffer
 if (dbn < 0) {
     bfsAllocBlock(inum, fbn);
     dbn = bfsFbnToDbn(inum, fbn);
     memset(buffer, 0, BYTESPERBLOCK);
 } else {
-    bfsRead(inum, fbn, buffer);
+    bfsRead(inum, fbn, buffer); //read the file data into the buffer
 }
 
+// If the number of bytes to be written is less than or equal to the size of a file block,
+// copy the data from the input buffer into the current file block's buffer
 if (numb <= BYTESPERBLOCK) {
     for (int i = 0; i < numb; i++) {
         buffer[(fsTell(fd) % BYTESPERBLOCK) + i] = otherBuffer[i];
     }
-    bioWrite(dbn, &buffer);
+    bioWrite(dbn, &buffer); // write the data from currrent file block buffer to disk
 } else {
+    // If the number of bytes to be written is larger than a file block, write the first
+    // block's worth of data to disk and then continue with the remaining data
     int remainder = numb;
     int offset = fsTell(fd) % BYTESPERBLOCK;
 
@@ -229,11 +226,12 @@ if (numb <= BYTESPERBLOCK) {
     while (remainder > BYTESPERBLOCK) {
         fbn++;
         dbn = bfsFbnToDbn(inum, fbn);
-        memcpy(buffer, otherBuffer + numb - remainder, BYTESPERBLOCK);
+        memcpy(buffer, otherBuffer + numb - remainder, BYTESPERBLOCK); //copy the next file block into the buffer
         bioWrite(dbn, buffer);
         remainder = remainder - BYTESPERBLOCK;
     }
 
+    // if there is data remaining write the data to a new file block
     if (remainder > 0) {
         dbn = bfsFbnToDbn(inum, fbn + 1);
         if (dbn < 0) {
